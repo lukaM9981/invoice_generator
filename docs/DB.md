@@ -1,8 +1,8 @@
 # Invoice Generator — Database Schema
 
-Target: Supabase Postgres **17.6**. The `public` schema is currently empty, so everything
-below is greenfield. Product rules come from [PRD.md](./PRD.md); the surrounding
-architecture is in [Tech.md](./Tech.md).
+Target: Supabase Postgres **17.6**. Everything below is applied to the project; the
+migrations that create it live in `supabase/migrations/`. Product rules come from
+[PRD.md](./PRD.md); the surrounding architecture is in [Tech.md](./Tech.md).
 
 ## 1. Conventions
 

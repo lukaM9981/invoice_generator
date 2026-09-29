@@ -1,0 +1,30 @@
+---
+description: Execute all Supabase work via MCP; never leave SQL or dashboard steps to the user
+alwaysApply: true
+---
+
+# Supabase MCP — do the work yourself
+
+This project has a live MCP connection to the user's Supabase project (`user-supabase`). When the user asks for anything related to Supabase (schema, SQL, migrations, RLS, Auth, Storage, Edge Functions, logs, types, branches, advisors), **run it through MCP**. Do not paste SQL, dashboard click-paths, or CLI commands for the user to copy-run.
+
+## Do it yourself
+
+- Inspect first: `list_tables`, `list_migrations`, `list_extensions` before changing schema.
+- DDL (CREATE/ALTER/DROP, RLS, indexes, functions): `apply_migration` with a snake_case name.
+- DML / SELECT / diagnostics: `execute_sql`.
+- Also use MCP for logs, advisors, types, project URL/keys, Edge Functions, and branches.
+- Follow `docs/DB.md` — do not invent tables or columns.
+- After schema changes, update `docs/DB.md` if the documented schema changed.
+
+```text
+❌ BAD — leaving work for the user
+"Run this in the SQL editor:
+CREATE TABLE invoices (...);"
+
+✅ GOOD — execute via MCP, then report the result
+Call apply_migration / execute_sql, then tell the user what was applied and what happened.
+```
+
+## When to involve the user
+
+Only tell the user they need to act when MCP **cannot** do the task (auth required, missing tool, permission error, confirmation you cannot complete). State what failed, what you tried, and the single next step they must take. Never use that as a default — try MCP first.

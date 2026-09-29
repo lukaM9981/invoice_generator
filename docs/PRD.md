@@ -305,8 +305,8 @@ The landing screen after sign-in shows:
 
 ## 10. Open questions
 
-| Question                                                              | Proposed default             |
-| --------------------------------------------------------------------- | ---------------------------- |
-| Must a new user confirm their email address before signing in?         | Yes, confirmation required   |
-| How many invoices per page in the list?                                | 20                           |
-| What language is the user interface written in?                        | English                      |
+| Question                                                              | Proposed default             | Decision                     |
+| --------------------------------------------------------------------- | ---------------------------- | ------------------------------ |
+| Must a new user confirm their email address before signing in?         | Yes, confirmation required   | **Yes — confirmation required** |
+| How many invoices per page in the list?                                | 20                           |                                |
+| What language is the user interface written in?                        | English                      |                                |

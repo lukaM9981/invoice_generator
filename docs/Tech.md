@@ -5,8 +5,9 @@ database schema itself lives in [DB.md](./DB.md).
 
 ## 1. Current state of the repository
 
-The project is a fresh Next.js application with Supabase and shadcn/ui already wired up.
-Nothing product-specific has been built yet.
+The database schema from [DB.md](./DB.md) is applied, and authentication is built: the
+`(auth)` screens, the `/confirm` callback, and the guarded `(app)` shell with a
+placeholder dashboard. Everything from profile CRUD onwards is still to come.
 
 **Installed and configured**
 
@@ -21,6 +22,11 @@ Nothing product-specific has been built yet.
 | `shadcn`               | 4.19.0  | CLI; `base-nova` style, `zinc` base colour                |
 | `@base-ui/react`       | 1.7.0   | Primitive layer used by the shadcn preset                 |
 | `@remixicon/react`     | 4.9.0   | Icon library configured in `components.json`              |
+| `zod`                  | 4.5.4   | Schema validation shared by forms and server actions      |
+| `react-hook-form`      | 7.87.0  | Form state, paired with the shadcn `field` primitives     |
+| `@hookform/resolvers`  | 5.9.1   | Bridges the zod schemas into react-hook-form              |
+| `server-only`          | 0.0.1   | Keeps server modules out of client bundles                |
+| `sonner` / `next-themes` | 2.x / 0.4.x | Pulled in by the shadcn `sonner` toaster            |
 | `eslint`               | 9.x     | `eslint-config-next`                                      |
 
 Existing files that matter:
@@ -28,13 +34,13 @@ Existing files that matter:
 - `utils/supabase/client.ts` — browser client.
 - `utils/supabase/server.ts` — server client bound to the Next.js cookie store.
 - `utils/supabase/middleware.ts` — `updateSession()` that refreshes the auth token.
-- `proxy.ts` — root proxy calling `updateSession` on every non-asset request.
-- `components/ui/button.tsx` — the only shadcn component pulled in so far.
+- `proxy.ts` — root proxy that refreshes the session and redirects optimistically.
+- `components/ui/` — `button`, `input`, `label`, `card`, `field`, `separator`, `sonner`.
 - `.env.local` — currently holds `NEXT_PUBLIC_SUPABASE_URL` and
   `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
 
-The Supabase project is reachable and runs **Postgres 17.6**, with an empty `public`
-schema.
+The Supabase project is reachable and runs **Postgres 17.6**, with the eight tables from
+[DB.md](./DB.md) in `public`, all with row-level security enabled.
 
 **Packages still to install**
 
@@ -44,12 +50,13 @@ schema.
 | `resend`                 | 6.25.0  | Transactional email delivery                        |
 | `@react-pdf/renderer`    | 4.9.0   | PDF rendering in Node; peer-compatible with React 19|
 | `@react-email/components`| 1.0.12  | Typed building blocks for the invoice email         |
-| `zod`                    | 4.5.4   | Schema validation shared by forms and server actions|
 
-Additional shadcn components will be pulled through the CLI as screens are built (form,
-input, select, table, dialog, dropdown-menu, badge, card, sonner, and similar). Per the
-project UI rules, always check the shadcn registry before hand-rolling a primitive, and
-keep the `base-nova` preset from `components.json`.
+Additional shadcn components will be pulled through the CLI as screens are built (select,
+table, dialog, dropdown-menu, badge, and similar). Per the project UI rules, always check
+the shadcn registry before hand-rolling a primitive, and keep the `base-nova` preset from
+`components.json`. Note that `form` is empty in this preset: forms are composed from the
+`field` primitives (`Field`, `FieldLabel`, `FieldError`, `FieldGroup`) plus
+react-hook-form.
 
 ## 2. Next.js 16 specifics that shape the design
 
@@ -95,6 +102,7 @@ app/
     register/page.tsx
     forgot-password/page.tsx
     reset-password/page.tsx
+    verify-email/page.tsx           shown after sign-up, before confirmation
     confirm/route.ts                email confirmation + recovery callback
   (app)/
     layout.tsx                      auth guard + app shell
@@ -116,6 +124,12 @@ app/
       webhook/route.ts              Connect webhook receiver
     invoices/[id]/pdf/route.ts      streams the stored PDF
 lib/
+  auth/
+    actions.ts                      'use server' sign-in / sign-up / reset / sign-out
+    queries.ts                      getCurrentUser(), requireUser()
+    schemas.ts                      zod schemas
+    routes.ts                       path constants, safeRedirectPath(); proxy-safe
+    urls.ts                         absolute origin for links Supabase emails
   invoices/
     actions.ts                      'use server' mutations
     queries.ts                      server-only reads
@@ -155,9 +169,37 @@ Defence in depth, from outermost to innermost:
 Authorization data is never read from `user_metadata`, which the user can edit themselves.
 This application has a single role, so no role claims are needed at all.
 
+`lib/auth/queries.ts` is the one place that resolves the signed-in user, through
+`getClaims()` wrapped in React `cache`, so a render pass verifies the token once.
+`requireUser()` adds the redirect and is called by the `(app)` layout and by every page
+and action below it.
+
 Password recovery uses Supabase's recovery email; the link lands on
 `app/(auth)/confirm/route.ts`, which exchanges the token and redirects to the
-reset-password form.
+reset-password form. That handler accepts both link shapes: `?code=` from Supabase's stock
+email templates, exchanged with `exchangeCodeForSession`, and `?token_hash=&type=` from
+templates rewritten to point straight at `/confirm`, verified with `verifyOtp`. Only
+`signup` and `recovery` are accepted as `type` values; anything else is treated as an
+invalid link. A failed exchange lands on `/login?error=invalid_link`.
+
+After a successful recovery exchange, `/confirm` sets a short-lived `recovery_grant`
+httpOnly cookie. The reset-password page and the `resetPassword` server action require
+both a valid session and that cookie, so a normal sign-in session cannot change the
+password without the emailed link. The cookie is cleared after a successful password
+change.
+
+Redirect targets passed as `?next=` are validated by `safeRedirectPath`, which rejects
+backslashes and control characters that browsers fold into external origins. The confirm
+handler additionally checks that the resolved URL stays on the same origin.
+
+Enumeration is avoided throughout: sign-in reports the same message for an unknown address
+and a wrong password, `resetPasswordForEmail` always reports success, and sign-up always
+ends on `/verify-email` because Supabase returns an obfuscated user for an address that
+already exists.
+
+Two settings live in the Supabase dashboard rather than in this repository: email
+confirmation must stay enabled (`mailer_autoconfirm` off), and the redirect allow list must
+cover `/confirm` on every environment origin.
 
 ## 6. Data access model
 
@@ -344,18 +386,24 @@ button when a link exists, and the PDF as an attachment.
 | `STRIPE_CONNECT_WEBHOOK_SECRET`       | server only | Signature verification               |
 | `RESEND_API_KEY`                      | server only | Email delivery                       |
 | `EMAIL_FROM`                          | server only | Verified sending address             |
-| `NEXT_PUBLIC_APP_URL`                 | client+server | Absolute URLs for Stripe redirects |
+| `NEXT_PUBLIC_APP_URL`                 | client+server | Absolute URLs for Stripe redirects and Supabase email links |
 
 The first two are already present in `.env.local`; the rest need to be added there and in
-the Vercel project settings.
+the Vercel project settings. `NEXT_PUBLIC_APP_URL` is optional in local development —
+`lib/auth/urls.ts` falls back to the request's forwarded host, defaulting to `https` except
+on `localhost` and `127.0.0.1` — but it must be set on any deployed environment so email
+links point at the right origin.
 
 ## 12. Error handling and validation
 
 - Zod schemas in `lib/**/schemas.ts` are the single source of truth, used by the client
   form and re-parsed inside the server action.
 - Server actions return a typed `{ ok: false, error }` result for expected failures and
-  throw only on genuinely exceptional ones; the UI surfaces them with `useActionState` and
-  a toast.
+  throw only on genuinely exceptional ones.
+- Forms are client components using react-hook-form with `zodResolver`, which renders
+  per-field errors through `FieldError`. Submitting calls the server action directly and
+  surfaces its returned error in a toast; `formState.isSubmitting` drives the pending
+  state. On success the action redirects, so the form never has to navigate itself.
 - `error.tsx` and `not-found.tsx` boundaries cover the `(app)` segment.
 - Third-party failures (Stripe, Resend) are caught, written to the relevant history table,
   and shown to the user with a retry, rather than being swallowed.

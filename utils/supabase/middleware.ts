@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
+import type { Database } from "@/lib/database.types";
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
@@ -9,7 +10,7 @@ export async function updateSession(request: NextRequest) {
     request,
   });
 
-  const supabase = createServerClient(
+  const supabase = createServerClient<Database>(
     supabaseUrl!,
     supabaseKey!,
     {
@@ -34,7 +35,10 @@ export async function updateSession(request: NextRequest) {
   );
 
   // Refresh the auth token. Do not run other logic between createServerClient and getClaims().
-  await supabase.auth.getClaims()
+  const { data } = await supabase.auth.getClaims()
 
-  return supabaseResponse
+  return {
+    response: supabaseResponse,
+    isAuthenticated: Boolean(data?.claims?.sub),
+  }
 }
