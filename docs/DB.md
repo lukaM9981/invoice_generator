@@ -92,11 +92,18 @@ create table public.clients (
 create index clients_user_id_idx on public.clients (user_id);
 create index clients_active_idx  on public.clients (user_id, created_at desc)
   where archived_at is null;
+
+create unique index clients_active_email_unique
+  on public.clients (user_id, lower(email))
+  where archived_at is null and email is not null;
 ```
 
 Deleting a client sets `archived_at`. Archived clients disappear from the list and from
 the invoice dropdown but remain joinable from old invoices. The partial index keeps the
-common "my active clients" query cheap.
+common "my active clients" query cheap. Among clients that are still visible, email
+addresses are unique per user without regard to letter case. A blank email is stored as
+null and is not part of that rule, so several clients may have no email. An archived
+client's email can be used again.
 
 ### 3.3 `invoices`
 
@@ -820,6 +827,7 @@ supabase/migrations/
   0007_paid_invoice_locks.sql    edit-locking triggers
   0008_stripe_events.sql
   0009_storage.sql               bucket + object policies
+  0010_clients_active_email_unique.sql
 ```
 
 After applying them:

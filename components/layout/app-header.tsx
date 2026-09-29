@@ -29,7 +29,6 @@ const navigationItems = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/invoices", label: "Invoices" },
   { href: "/clients", label: "Clients" },
-  { href: "/settings", label: "Settings" },
 ] as const;
 
 export function AppHeader({ email }: { email: string | null }) {

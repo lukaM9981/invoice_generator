@@ -113,10 +113,8 @@ app/
       [id]/page.tsx                 detail
       [id]/edit/page.tsx
     clients/
-      page.tsx
-      new/page.tsx
-      [id]/edit/page.tsx
-    settings/profile/page.tsx
+      page.tsx                      list, search, add and edit in a dialog
+    settings/page.tsx               sender details
   api/
     stripe/
       connect/start/route.ts        creates the account link, redirects to Stripe
