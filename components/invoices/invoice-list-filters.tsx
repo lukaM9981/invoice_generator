@@ -66,9 +66,9 @@ export function InvoiceListFilters({
         value={status}
         onValueChange={(next) => router.replace(buildHref(next as InvoiceStatusFilter, sent))}
       >
-        <TabsList className="max-w-full overflow-x-auto">
+        <TabsList className="w-full group-data-horizontal/tabs:h-9 sm:w-fit">
           {STATUS_TABS.map((tab) => (
-            <TabsTrigger key={tab.value} value={tab.value}>
+            <TabsTrigger key={tab.value} value={tab.value} className="px-2 sm:px-3">
               {tab.label}
             </TabsTrigger>
           ))}
