@@ -60,7 +60,7 @@ async function emailTaken(
 
 export async function createClientRecord(
   values: ClientFormValues,
-): Promise<ActionResult> {
+): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   const user = await requireUser();
   const parsed = clientSchema.safeParse(values);
 
@@ -79,24 +79,28 @@ export async function createClientRecord(
   }
 
   const supabase = createClient(await cookies());
-  const { error } = await supabase.from("clients").insert({
-    user_id: user.id,
-    full_name: parsed.data.full_name,
-    company_name: parsed.data.company_name,
-    email: parsed.data.email,
-    address: parsed.data.address,
-    vat_id: parsed.data.vat_id,
-  });
+  const { data, error } = await supabase
+    .from("clients")
+    .insert({
+      user_id: user.id,
+      full_name: parsed.data.full_name,
+      company_name: parsed.data.company_name,
+      email: parsed.data.email,
+      address: parsed.data.address,
+      vat_id: parsed.data.vat_id,
+    })
+    .select("id")
+    .single();
 
-  if (error) {
-    if (isDuplicateEmailError(error)) {
+  if (error || !data) {
+    if (error && isDuplicateEmailError(error)) {
       return { ok: false, error: DUPLICATE_CLIENT_EMAIL };
     }
     return { ok: false, error: UNEXPECTED };
   }
 
   revalidatePath("/clients");
-  return { ok: true };
+  return { ok: true, id: data.id };
 }
 
 export async function updateClientRecord(

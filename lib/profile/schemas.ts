@@ -40,6 +40,13 @@ export const profileSchema = z.object({
     .transform((value) => (value.length === 0 ? null : value)),
 });
 
+export const emailDefaultsSchema = z.object({
+  default_email_subject: optionalText(200, "Subject is too long."),
+  default_email_body: optionalText(5000, "Message is too long."),
+});
+
+export type EmailDefaultsFormValues = z.input<typeof emailDefaultsSchema>;
+
 export type ProfileFormValues = z.input<typeof profileSchema>;
 export type ProfileValues = z.output<typeof profileSchema>;
 

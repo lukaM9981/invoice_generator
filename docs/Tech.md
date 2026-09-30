@@ -5,9 +5,12 @@ database schema itself lives in [DB.md](./DB.md).
 
 ## 1. Current state of the repository
 
-The database schema from [DB.md](./DB.md) is applied, and authentication is built: the
-`(auth)` screens, the `/confirm` callback, and the guarded `(app)` shell with a
-placeholder dashboard. Everything from profile CRUD onwards is still to come.
+The database schema from [DB.md](./DB.md) is applied and the full product is built:
+authentication, profile and client CRUD, the invoice editor with drafts and finalizing,
+PDF rendering and versioning, Stripe Connect onboarding with payment links and the
+webhook, sending by email with send history, the invoice list and detail screens, and the
+dashboard. Stripe and Resend only work once their environment variables (section 11) are
+set; without them the UI explains what is missing and failed sends are recorded.
 
 **Installed and configured**
 
@@ -42,7 +45,7 @@ Existing files that matter:
 The Supabase project is reachable and runs **Postgres 17.6**, with the eight tables from
 [DB.md](./DB.md) in `public`, all with row-level security enabled.
 
-**Packages still to install**
+**Payment, PDF, and email packages** (installed, pinned)
 
 | Package                  | Version | Purpose                                            |
 | ------------------------ | ------- | -------------------------------------------------- |
@@ -250,8 +253,14 @@ Afterwards the application renders the PDF and stores it as version 1.
   rejects any update to a paid invoice that changes anything other than the payment
   fields, so reverting to unpaid remains possible. Deletion of paid invoices is blocked by
   the RLS `delete` policy.
-- Editing a finalized invoice bumps `content_version`. If the invoice had already been
-  sent, the UI opens the re-send confirmation dialog after saving.
+- Every save sends the full list of rows to `replace_invoice_line_items()`, which swaps
+  them in one transaction. For a finalized invoice it also bumps `content_version`, and the
+  action renders a new PDF version. If the save changed the total or currency, the open
+  payment link is deactivated immediately. If the invoice had already been sent, the UI
+  then opens the re-send confirmation dialog; confirming opens the send dialog so the
+  message can still be reviewed.
+- Changing the client on a finalized invoice re-copies that client into the `client_*`
+  snapshot. The sender snapshot and the invoice number never change.
 
 ### 7.4 Money and rounding
 
@@ -275,17 +284,26 @@ route handler on the Node runtime, and produces a buffer.
 
 - The buffer is uploaded to the private Supabase Storage bucket `invoice-pdfs` at
   `{user_id}/{invoice_id}/v{version}.pdf`, and a row is inserted into `invoice_pdfs`.
-- A new version is rendered whenever a finalized invoice is edited and re-sent. Old
-  versions stay in place; `invoice_pdfs.version` identifies the latest.
+- Version 1 is rendered at finalize, and a new version on **every save of a finalized
+  invoice**. A send always attaches the latest version, and renders one first if none
+  exists (for example when rendering failed at finalize). Old versions stay in place;
+  `invoice_pdfs.version` identifies the latest, and each `invoice_sends` row points at the
+  exact PDF that went out.
 - Downloads go through `app/api/invoices/[id]/pdf/route.ts`, which authenticates the user,
-  confirms ownership, and either streams the object or issues a short-lived signed URL.
-  The bucket is never public.
+  confirms ownership, and streams the object (`?version=` for an older one,
+  `?disposition=inline` to open it in the browser). The bucket is never public.
 - Storage policies restrict every object to the owning user by matching the first path
-  segment against `auth.uid()`. Because the app replaces rather than overwrites, only
-  `insert` and `select` are needed; upsert would additionally require `update`.
+  segment against `auth.uid()`. `insert` and `select` cover rendering and downloading;
+  `delete` lets deleting an unpaid invoice remove its PDFs. Upsert would additionally
+  require `update`.
+- The invoice detail screen shows an HTML rendering of the same data plus Download and
+  Open buttons, rather than an embedded viewer, because embedded PDFs are unreliable on
+  phones.
 
-Fonts are registered explicitly in the document module so output is identical on every
-machine, and the layout is fixed to A4.
+Fonts (Inter, WOFF, in `lib/invoices/pdf/fonts/`) are registered explicitly in the
+document module so output is identical on every machine, and the layout is fixed to A4.
+`outputFileTracingIncludes` in `next.config.ts` ships the font files with the server
+bundle.
 
 ## 9. Stripe integration
 
@@ -324,8 +342,14 @@ allow it — they are deactivated with `active: false`. Deactivation is triggere
 amount changes, when the user marks the invoice paid manually, and when the invoice is
 paid through Stripe. A new link is created on the next send.
 
-All create calls pass an idempotency key derived from the invoice id and its content
-version, so a retried send cannot produce two live links for the same invoice.
+All create calls pass an idempotency key derived from the invoice id, its content
+version, and its `updated_at`, so a retried or double-clicked send cannot produce two live
+links, while a revert to unpaid still gets a fresh link. Once created, the link is stored
+on the invoice and reused by later sends until it is deactivated.
+
+Disconnecting (Settings) deactivates the open links on unpaid invoices and clears the
+stored account id and capability flags. The `account.application.deauthorized` webhook
+does the same when the user disconnects from Stripe's side.
 
 ### 9.3 Webhooks
 
@@ -340,7 +364,8 @@ the connected account.
    with `stripe.webhooks.constructEvent` and the endpoint secret.
 2. Inserts `event.id` into `stripe_events`. A unique-violation means the event was already
    handled, and the handler returns `200` immediately — this is the exactly-once guard the
-   PRD requires.
+   PRD requires. If handling then fails, the row is deleted again and the handler returns
+   `500`, so Stripe's retry is processed rather than skipped.
 3. Handles the event:
    - `checkout.session.completed` with `payment_status = 'paid'` — resolve the invoice
      from `session.payment_link` or the metadata, verify `event.account` matches the
@@ -372,6 +397,11 @@ button when a link exists, and the PDF as an attachment.
   the detail screen can show the send history and failures can be retried.
 - Sending is the last step of the send action: the payment link is created first, and if
   the email fails the invoice stays consistent and the user sees a clear error.
+- The subject and body are plain text, pre-filled from the profile defaults, or from
+  built-in wording when those are empty. No placeholders are supported; the template
+  always adds a fixed summary block (number, amount, due date, and the Pay button).
+- If the frozen client snapshot has no email, the address typed in the send dialog is
+  saved onto the invoice and onto the client (when the client has none).
 
 ## 11. Environment variables
 

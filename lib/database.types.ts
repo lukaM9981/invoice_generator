@@ -490,6 +490,10 @@ export type Database = {
         Args: { p_invoice_id: string }
         Returns: undefined
       }
+      replace_invoice_line_items: {
+        Args: { p_invoice_id: string; p_items: Json }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never

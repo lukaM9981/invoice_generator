@@ -467,7 +467,68 @@ generated column), the subtotal is the sum of rounded line totals, and tax is ro
 once. The tax-rate trigger does not recurse, because the update it performs never touches
 `tax_rate`.
 
-### 4.4 Finalization and numbering
+### 4.4 Saving line items
+
+```sql
+create or replace function public.replace_invoice_line_items(p_invoice_id uuid, p_items jsonb)
+returns void
+language plpgsql
+set search_path = ''
+as $$
+declare
+  v_invoice public.invoices;
+begin
+  if p_items is null or jsonb_typeof(p_items) <> 'array' then
+    raise exception 'Line items must be an array' using errcode = 'invalid_parameter_value';
+  end if;
+
+  select * into v_invoice
+    from public.invoices
+   where id = p_invoice_id
+     for update;
+
+  if not found then
+    raise exception 'Invoice not found' using errcode = 'no_data_found';
+  end if;
+  if v_invoice.payment_status = 'paid' then
+    raise exception 'A paid invoice cannot be edited' using errcode = 'check_violation';
+  end if;
+
+  delete from public.invoice_line_items where invoice_id = p_invoice_id;
+
+  insert into public.invoice_line_items
+    (invoice_id, user_id, position, description, quantity, unit_type, unit_price)
+  select p_invoice_id,
+         v_invoice.user_id,
+         (t.ordinality - 1)::integer,
+         coalesce(t.item ->> 'description', ''),
+         (t.item ->> 'quantity')::numeric(12,2),
+         coalesce(t.item ->> 'unit_type', 'flat'),
+         (t.item ->> 'unit_price')::numeric(14,2)
+    from jsonb_array_elements(p_items) with ordinality as t(item, ordinality);
+
+  perform public.recalculate_invoice_totals(p_invoice_id);
+
+  if v_invoice.status = 'finalized' then
+    update public.invoices
+       set content_version = content_version + 1
+     where id = p_invoice_id;
+  end if;
+end;
+$$;
+
+revoke execute on function public.replace_invoice_line_items(uuid, jsonb) from public, anon;
+grant execute on function public.replace_invoice_line_items(uuid, jsonb) to authenticated;
+```
+
+The editor sends the complete list of rows on every save, and this function swaps them in
+one transaction, so an invoice never shows half of an edit. Positions are renumbered from
+the array order. Like `finalize_invoice()`, it is `security invoker`: row-level security
+still decides which invoice the caller can reach. Saving a finalized invoice also bumps
+`content_version`, which is what triggers a new PDF version and a new payment link
+idempotency key.
+
+### 4.5 Finalization and numbering
 
 ```sql
 create or replace function public.finalize_invoice(p_invoice_id uuid)
@@ -541,7 +602,7 @@ with someone else's invoice id gets "Invoice not found" because the `select ... 
 returns nothing. The `insert ... on conflict do update ... returning` locks the counter row
 for the duration of the transaction, which is what makes concurrent finalization safe.
 
-### 4.5 Locking paid invoices
+### 4.6 Locking paid invoices
 
 ```sql
 create or replace function public.tg_invoices_block_paid_changes()
@@ -761,13 +822,22 @@ create policy invoice_pdf_objects_insert_own on storage.objects
     bucket_id = 'invoice-pdfs'
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
+
+create policy invoice_pdf_objects_delete_own on storage.objects
+  for delete to authenticated
+  using (
+    bucket_id = 'invoice-pdfs'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
 ```
 
-The bucket is private and served through signed URLs. Paths are
+The bucket is private and served through an authenticated route handler. Paths are
 `{user_id}/{invoice_id}/v{version}.pdf`, so the first path segment is the ownership check.
-Only `select` and `insert` are granted, because each render writes a new version instead of
-overwriting; if upsert is ever introduced, an `update` policy becomes necessary too, since
-Supabase Storage upsert silently fails without all three.
+`select` and `insert` cover rendering and downloading, because each render writes a new
+version instead of overwriting. `delete` exists only so that deleting an unpaid invoice
+also removes its PDFs; paid invoices cannot be deleted, so their documents stay. If upsert
+is ever introduced, an `update` policy becomes necessary too, since Supabase Storage upsert
+silently fails without it.
 
 ## 7. Example queries
 
@@ -828,6 +898,8 @@ supabase/migrations/
   0008_stripe_events.sql
   0009_storage.sql               bucket + object policies
   0010_clients_active_email_unique.sql
+  0011_save_invoice_line_items.sql  replace_invoice_line_items()
+  0012_invoice_pdf_objects_delete.sql
 ```
 
 After applying them:

@@ -28,7 +28,7 @@ import {
   createClientRecord,
   updateClientRecord,
 } from "@/lib/clients/actions";
-import type { ClientRecord } from "@/lib/clients/types";
+import { clientInvoiceName, type ClientRecord } from "@/lib/clients/types";
 import {
   clientSchema,
   DUPLICATE_CLIENT_EMAIL,
@@ -49,10 +49,12 @@ export function ClientFormDialog({
   open,
   client,
   onOpenChange,
+  onCreated,
 }: {
   open: boolean;
   client: ClientRecord | null;
   onOpenChange: (open: boolean) => void;
+  onCreated?: (client: ClientRecord) => void;
 }) {
   const router = useRouter();
   const form = useForm<ClientFormValues>({
@@ -77,6 +79,15 @@ export function ClientFormDialog({
     }
 
     toast.success("Client saved.");
+    if (!editing && onCreated && "id" in result && typeof result.id === "string") {
+      const saved = clientSchema.parse(values);
+      onCreated({
+        id: result.id,
+        ...saved,
+        invoiceName: clientInvoiceName(saved),
+        secondaryName: saved.company_name && saved.full_name ? saved.full_name : null,
+      });
+    }
     onOpenChange(false);
     router.refresh();
   }
